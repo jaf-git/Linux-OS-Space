@@ -19,21 +19,21 @@
 #define HEADER_SIZE 2
 #define VERSION_SIZE 2
 #define NO_OF_SECTIONS 1
-#define SECT_NAME 7
-#define SECT_TYPE 4
-#define SECT_OFFSET 4
+#define SECT_NAME_SIZE 7
+#define SECT_TYPE_SIZE 4
+#define SECT_OFFSET_SIZE 4
 #define SECT_SIZE 4
 
 #define MAGIC_OFFSET 0X00
 #define HEADER_SIZE_OFFSET 0X04
 #define VERSION_OFFSET 0X06
 #define NO_OF_SECTIONS_OFFSET 0x08
-#define SECTIONS_HEADERS_START_OFFSET 0X09
-#define SECTIONS_HEADERS_END_OFFSET 0X2E
-#define SECTION_NAME_OFFSET 0X09
-#define SECTION_OFFSET 0X14
-#define SECTION_TYPE_OFFSET 0X10
-#define SECTION_SIZE 0X18 
+#define SECT_HEADERS_START_OFFSET 0X09
+#define SECT_HEADERS_END_OFFSET 0X2E
+#define SECT_NAME_OFFSET 0X09
+#define SECT_OFFSET 0X14
+#define SECT_TYPE_OFFSET 0X10
+#define SECT_SIZE_OFFSET 0X18 
 
 
 #define __ERROR_DETECTION
@@ -81,8 +81,8 @@ typedef struct list_options
 typedef struct fs_file
 {
     char* magic;
-    int version;
-    int nr_sections;
+    unsigned short version;
+    unsigned char nr_sections;
     struct fs_file_section** section;
 }fs_file;
 
@@ -90,8 +90,8 @@ typedef struct fs_file_section
 {
     char* name;
     unsigned int type;
-    unsigned int offset;
-    unsigned int size;
+    off_t offset;
+    size_t size;
 }section;
 
 // DATA STRUCTUES SECTION ENDS --
@@ -134,7 +134,8 @@ void display_file_content(fs_file* file)
         DISPLAY_ERR("Null pointer error!");
         exit(70);
     }
-    fprintf(stdout, "SUCCESS\nmagic=%s\nversion=%d\nnr_sections=%d\n", file->magic, file->version, file->nr_sections);
+
+    fprintf(stdout,"SUCCESS\nversion=%d\nnr_sections=%d\n", file->version, file->nr_sections);
     for(int i = 0; i < file->nr_sections; i++)
     {
         fprintf(stdout, "section%d: %s %d %zu\n", i+1, 
@@ -463,6 +464,23 @@ int recursive_listing(char* path, char* name_ends_with, int have_perm_write)
     return 1;
 }
 
+void free_file_contents(fs_file* file)
+{   
+    if(file == NULL)
+        return;
+    int no_sections = file->nr_sections;
+    for(int i = 0; i < no_sections; ++i)
+    {
+        if(file->section[i] != NULL)
+            free(file->section);
+    }
+    if(file->section != NULL)
+        free(file->section);
+    file->section = NULL;
+    free(file);
+    file = NULL;
+}
+
 // "8maz"
 char* check_magic(int fd)
 {
@@ -525,8 +543,6 @@ unsigned short check_version(int fd)
     {
         return version_number;
     }
-    else return 0;
-    
     return 0;
 }
 
@@ -542,68 +558,129 @@ int check_sections_nr(int fd)
         return 0;
     }
 
-    if((read_bytes = read(fd, &section_buffer, NO_OF_SECTIONS)) > 0)
+    if((read_bytes = read(fd, &section_buffer, NO_OF_SECTIONS)) < 0)
     {   
-        if(section_buffer == 2 || (section_buffer >= 7 && section_buffer <= 15))
-            return section_buffer;
-        else return 0;
-    }
-    else 
-    {
         DISPLAY_ERR("Enable to read the file number of sections");
         return 0;
-    }
+    } 
+    else
+    {
+        if(section_buffer == 2 || (section_buffer >= 7 && section_buffer <= 15))
+            return section_buffer;
+    } 
     return 0;
 }
 
 int check_sections_type(int fd, fs_file* file)
 {
-    file->section = (section**)malloc(file->nr_sections * sizeof(section*)); // allocate memory based on the number
+    if(file == NULL)
+        return 0;
+
+    file->section = (section**)malloc(file->nr_sections * sizeof(section)); // allocate memory based on the number
     // of the sections specified in the fs file
     if(file->section == NULL)
     {
         DISPLAY_ERR("Memory allocations error - file section");
-        free(file);
+        free_file_contents(file);
         close(fd);
         exit(ENOMEM);
     }
-    char* section_name = (char*)malloc((SECT_NAME + 1) * sizeof(char));
-    char* section_type = (char*)malloc((SECT_TYPE + 1) * sizeof(char));
-    char* section_offset = (char*)malloc((SECT_OFFSET + 1) * sizeof(char));
-    char* section_size = (char*)malloc((SECT_SIZE + 1) * sizeof(char));
+
     int read_bytes = 0;
 
-    int seek = lseek(fd, 0, SEEK_SET);
+    int seek = lseek(fd, SECT_HEADERS_START_OFFSET, SEEK_SET);
     if(seek == -1)
     {
         DISPLAY_ERR("Enable to set the position pointer");
         return 0;
     }
 
+    int global_seek = seek;
     for(int i = 0; i < file->nr_sections; ++i)
     {
-        if(     (read_bytes += read(fd, section_name, SECT_NAME)) < 0
-            ||  (read_bytes += read(fd, section_type, SECT_TYPE)) < 0
-            ||  (read_bytes += read(fd, section_offset, SECT_OFFSET)) < 0
-            ||  (read_bytes += read(fd, section_size, SECT_SIZE)) < 0)
-            {
-                DISPLAY_ERR("Error reading the section file");
-                return 0;
-            }
-        section_name[SECT_NAME - 1] = '\0';
-        section_type[SECT_TYPE - 1] = '\0';
-        section_offset[SECT_OFFSET - 1] = '\0';
-        section_size[SECT_SIZE - 1] = '\0';
-
         file->section[i] = (section*)malloc(sizeof(section));
 
-        file->section[i]->name = malloc(sizeof(section_name));
-        file->section[i]->name = section_name;
-        file->section[i]->type = atoi(section_type);
-        file->section[i]->offset = atoi(section_offset);
-        file->section[i]->size = atoi(section_size);
+        // READ SECTION NAME
+        char* section_name = (char*)malloc((SECT_NAME_SIZE + 1) * sizeof(char));
+        if((read_bytes = read(fd, section_name, sizeof(section_name))) >= 0){
+            section_name[SECT_NAME_SIZE] = '\0';
+            file->section[i]->name = malloc((SECT_NAME_SIZE + 1) * sizeof(char));
+            file->section[i]->name = strdup(section_name);
+            free(section_name);
+        }
+        else
+        {
+            DISPLAY_ERR("Error reading the section name");
+            free(section_name);
+            return 0;
+        }
+
+        global_seek = global_seek + SECT_NAME_SIZE;
+        seek = lseek(fd, global_seek , SEEK_SET);
+        if(seek == -1)
+        {
+            DISPLAY_ERR("Enable to set the position pointer for SECTION NAME");
+            return 0;
+        }
+        // SECTION NAME READ AND STORED, POSITION POINTER UPDATED
+
+        // READ SECTION TYPE
+        unsigned int section_type = 0;
+        if((read_bytes = read(fd, &section_type, sizeof(section_type))) >= 0)
+            file->section[i]->type = section_type;
+        else
+        {
+            DISPLAY_ERR("Error reading the section type");
+            return 0;
+        }
+
+        global_seek = global_seek + SECT_TYPE_SIZE;
+        seek = lseek(fd, global_seek, SEEK_SET);
+        if(seek == -1)
+        {
+            DISPLAY_ERR("Enable to set the position pointer for SECTION TYPE");
+            return 0;
+        }
+        // SECTION TYPE STORED, POSITION POINTER UPDATED
+
+        // READ SECTION OFFSET
+        off_t section_offset = 0;
+        if((read_bytes = read(fd, &section_offset, SECT_OFFSET_SIZE)) >= 0)
+            file->section[i]->offset = section_offset;
+        else
+        {
+            DISPLAY_ERR("Error reading the section offset");
+            return 0;
+        }
+
+        global_seek = global_seek + SECT_OFFSET_SIZE;
+        seek = lseek(fd, global_seek, SEEK_SET);
+        if(seek == -1)
+        {
+            DISPLAY_ERR("Enable to set the position pointer for SECTION OFFSET");
+            return 0;
+        }
+        // SECTION OFFSET STORED, POSITION POINTER UPDATED    
+        
+        // READ SECTION SIZE
+        unsigned int section_size = 0;
+        if((read_bytes = read(fd, &section_size, SECT_SIZE)) >= 0)
+            file->section[i]->size = section_size;
+        else
+        {
+            DISPLAY_ERR("Error reading the section size");
+            return 0;
+        }
+
+        global_seek = global_seek + SECT_SIZE;
+        seek = lseek(fd, global_seek, SEEK_SET);
+        if(seek == -1)
+        {
+            DISPLAY_ERR("Enable to set the position pointer for SECTION SIZE");
+            return 0;
+        }
+        // SECTION SIZE READ, POSITION POINTER UPDATED
     }
-    display_file_content(file);
 
     for(int j = 0; j < file->nr_sections; ++j)
     {
@@ -613,7 +690,6 @@ int check_sections_type(int fd, fs_file* file)
             {
                 return 0;
             }
-
         }
     }
     return 1;
@@ -622,85 +698,34 @@ int check_sections_type(int fd, fs_file* file)
 fs_file* test_parse_constraints(char* path, int fd)
 {
     fs_file* file = create_fs_file();
+
     if(!(file->magic = check_magic(fd)))
-    {
-        DISPLAY_ERR("Wrong magic");
-        free(file->section);
-        free(file);
-        close(fd);
-        exit(11);
-    }
+        DISPLAY_ERR("Wrong magic\n");
+
     if(!(file->version = check_version(fd)))
-    {
-        DISPLAY_ERR("Wrong version");
-        free(file->section);
-        free(file);
-        close(fd);
-        exit(11);
-    }
+        DISPLAY_ERR("Wrong version\n");
+
     if(!(file->nr_sections = check_sections_nr(fd)))
-    {
-        DISPLAY_ERR("Wrong sect_nr");
-        free(file->section);
-        free(file);
-        close(fd);
-        exit(11);
-    }
+        DISPLAY_ERR("Wrong sect_nr\n");
 
     if(!(check_sections_type(fd, file)))
-    {
-        DISPLAY_ERR("Wrong sect_types");
-        free(file->section);
-        free(file);
-        close(fd);
-        exit(11);
-    }
+        DISPLAY_ERR("Wrong sect_types\n");
+
     return file;
 }
 
-//magic = 8maz
-//version = 72 - 93
-//nr_sections = 2 or (7-15)
-//section_type = 88 31
 fs_file* is_fs(char* path, int fd)
 { 
     fs_file* file = test_parse_constraints(path, fd);
-    close(fd);
     return file;
 }
 
-int is_printable(char* string)
-{
-    for(int i = 0 ; string[i] < sizeof(string); i++)
-    {
-        if(string[i] < 33 || string[i] > 126)
-        {
-            return i;
-        }
-    }
-    return 1;
-}
-
-int is_number(char* string)
-{   
-    int j = 0;
-    while(j != sizeof(string)){
-            if(string[j] < 48 || string[j] > 57)
-                return 0;
-    }
-    return 1;
-}
-
-typedef struct {
-    unsigned short version;
-    unsigned char no_of_sections;
-} SFHeader;
-
 // parse path=<file_name>
-int execute_parse_operation(int argc, char* argv[])
+void execute_parse_operation(int argc, char* argv[])
 {
     if(!check_args_num(argc, PARSE_MIN_ARGS, PARSE_MAX_ARGS))
-        return 0;
+        return;
+
     char* path = NULL;
     for(int i = 1; i < argc; i++)
     {
@@ -719,6 +744,7 @@ int execute_parse_operation(int argc, char* argv[])
             exit(1);
         }
     }
+
     int fd = open(path, O_RDONLY);
     if(fd == -1)
     {
@@ -726,49 +752,23 @@ int execute_parse_operation(int argc, char* argv[])
         close(fd);
         exit(2);
     }
+
     if(isOpenDir(fd))
     {
         DISPLAY_ERR("is a directory");
         close(fd);
         exit(1);
     }
-    fs_file* file = NULL;
-    file = is_fs(path, fd);
-    display_file_content(file);
 
-//     #define BUFFER_SIZE 4096
-// #define MAGIC "8maz"
+    fs_file* file = is_fs(path, fd);
+    if(file != NULL)
+    {
+        display_file_content(file);
+    }
 
-// int fd = open(path, O_RDONLY);
-//     if (fd == -1) {
-//         perror("Error opening file");
-//         return 1; // Return failure
-//     }
-
-
-//     char byte;
-//     while (read(fd, &byte, 1) > 0) { // Read byte by byte until the end of the file
-//     printf("byte=%c ", byte);
-//         if (byte >= 72 && byte <= 92) { // Check if the byte is between 72 and 92
-//             char num_str[4]; // Assuming the maximum length of number in string form is 4
-//             int n = snprintf(num_str, sizeof(num_str), "%d ", byte); // Convert byte to string
-//             if (n > 0) {
-//                 // write(STDOUT_FILENO, num_str, n); // Write the number to standard output
-//             }
-//         }
-//     }
-
-
-    return 0;
+    free_file_contents(file);
+    close(fd);
 }
-
-/*
-The values of the file version must be one from the interval mentioned
-above, i.e. between 72 and 93, including that values.
-• The number of sections must be 2 or between 7 and 15, including that
-values.
-• The existing sections’ type must be only in the set mentioned above, i.e.
-88 31 .*/
 
 int main(int argc, char* argv[])
 {
@@ -781,7 +781,7 @@ int main(int argc, char* argv[])
             printf("%s", variant);
             break;
         case 'l':
-            // execute_list_operation(argc, argv);
+            execute_list_operation(argc, argv);
             break;
         case 'p':
             execute_parse_operation(argc, argv);
