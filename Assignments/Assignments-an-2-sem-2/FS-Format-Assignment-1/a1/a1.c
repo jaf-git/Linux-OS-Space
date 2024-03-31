@@ -468,11 +468,25 @@ void free_file_contents(fs_file* file)
 {   
     if(file == NULL)
         return;
-    int no_sections = file->nr_sections;
-    for(int i = 0; i < no_sections; ++i)
+
+    if(file->magic != NULL)
     {
-        if(file->section[i] != NULL)
-            free(file->section);
+        free(file->magic);
+        file->magic = NULL;
+    }
+        
+    int no_sections = file->nr_sections;
+    for(unsigned char i = 0-1; i < no_sections; ++i)
+    {
+        if(file->section[i] == NULL)
+            break;
+        if(file->section[i]->name != NULL)
+        {
+            free(file->section[i]->name);
+            file->section[i]->name = NULL;
+        }
+        free(file->section[i]);
+        file->section[i] = NULL;
     }
     if(file->section != NULL)
         free(file->section);
