@@ -15,6 +15,11 @@
 #define LIST_MAX_ARGS 6
 #define PARSE_MIN_ARGS 3
 #define PARSE_MAX_ARGS 3
+#define EXTRACT_MIN_ARGS 5
+#define EXTRACT_MAX_ARGS 5
+#define FINDALL_MIN_ARGS 3
+#define FINDALL_MAX_ARGS 3
+
 
 #define MAGIC_SIZE 4
 #define HEADER_SIZE 2
@@ -768,16 +773,32 @@ fs_file* test_parse_constraints(int fd)
     fs_file* file = create_fs_file();
 
     if(!(file->magic = check_magic(fd)))
-        DISPLAY_ERR("Wrong magic\n");
+    {
+        printf("ERROR\nwrong magic\n");
+        free_file_contents(file);
+        return NULL;
+    }
 
     if(!(file->version = check_version(fd)))
-        DISPLAY_ERR("Wrong version\n");
+    {
+        printf("ERROR\nwrong version\n");
+        free_file_contents(file);
+        return NULL;
+    }
 
     if(!(file->nr_sections = check_no_of_sections(fd)))
-        DISPLAY_ERR("Wrong sect_nr\n");
+    {
+        printf("ERROR\nwrong sect_nr\n");
+        free_file_contents(file);
+        return NULL;
+    }
 
     if(!(check_sections_type(fd, file)))
-        DISPLAY_ERR("Wrong sect_types\n");
+    {
+        printf("ERROR\nwrong sect_types\n");
+        free_file_contents(file);
+        return NULL;
+    }
 
     return file;
 }
@@ -889,7 +910,10 @@ void execute_extract_operation(int argc, char* argv[])
 }
 
 section_line* fetch_extract_options(int argc, char* argv[])
-{
+{   
+    if(!check_args_num(argc, EXTRACT_MIN_ARGS, EXTRACT_MAX_ARGS))
+        return NULL;
+
     section_line* line = create_section_line();
     for(int i = 1; i < argc; i++)
     {
@@ -983,6 +1007,141 @@ char* get_line_contents(int fd, fs_file* file, int section_no, int line_no) {
 
 
 
+//______ EXTRACT OPERATION SECTION ______//
+
+int check_section_size(fs_file* file)
+{
+    unsigned char nr_sections = file->nr_sections;
+    for(int i = 0; i < nr_sections; i++)
+    {
+        size_t section_size = file->section[i]->size;
+        if(section_size > 1481)
+            return 0;
+    }
+    return 1;
+}
+
+// no section with size greater than 1481.
+void process_files(const char* entry_path) {
+    DIR* dir = opendir(entry_path);
+    if (dir == NULL) {
+        perror("Unable to open directory");
+        return;
+    }
+    
+    struct dirent* entry = NULL;
+    struct stat info = {0};
+    char abs_path[PATH_SIZE];
+
+    while ((entry = readdir(dir))) {
+        snprintf(abs_path, sizeof(abs_path), "%s/%s", entry_path, entry->d_name);
+
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+            continue;
+
+        if (lstat(abs_path, &info) < 0) {
+            perror("Unable to fetch file statistics");
+            continue;
+        }
+
+        if (!S_ISDIR(info.st_mode)) {
+            // Process file
+            int fd = open(abs_path, O_RDONLY);
+            if (fd < 0) {
+                perror("Unable to open the file");
+                continue;
+            }
+
+            fs_file* file = is_fs(fd);
+            if (file != NULL && check_section_size(file))
+                stdout_display(abs_path);
+
+            close(fd);
+        }
+    }
+
+    closedir(dir);
+}
+
+void findall_recursive(const char* entry_path) {
+    // Process files in current directory
+    process_files(entry_path);
+
+    // Traverse subdirectories
+    DIR* dir = opendir(entry_path);
+    if (dir == NULL) {
+        perror("Unable to open directory");
+        return;
+    }
+    
+    struct dirent* entry = NULL;
+    struct stat info = {0};
+    char abs_path[PATH_SIZE];
+
+    while ((entry = readdir(dir))) {
+        snprintf(abs_path, sizeof(abs_path), "%s/%s", entry_path, entry->d_name);
+
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+            continue;
+
+        if (lstat(abs_path, &info) < 0) {
+            perror("Unable to fetch file statistics");
+            continue;
+        }
+
+        if (S_ISDIR(info.st_mode)) {
+            // Recursively process subdirectories
+            findall_recursive(abs_path);
+        }
+    }
+
+    closedir(dir);
+}
+
+void fetch_findall_options(int argc, char* argv[])
+{
+    if(!check_args_num(argc, FINDALL_MIN_ARGS, FINDALL_MAX_ARGS))
+        return;
+    for(int i = 1; i < argc; i++)
+    {   
+        if(!strcmp(argv[i], "findall"))
+            continue;
+        else if(!strncmp(argv[i], "path=", 5))
+            path = argv[i] + 5;
+        else
+        {
+            stdout_display("Invalid input");
+            return;
+        }
+    }
+}
+
+void execute_findall_operation(int argc, char* argv[])
+{
+    fetch_findall_options(argc, argv);
+    if(path == NULL)
+    {
+        DISPLAY_ERR("Unable to fetch the path variable");
+        return;
+    }
+    if(isDir())
+    {
+        printf("SUCCESS");
+        findall_recursive(path);
+    }
+    else
+    {
+        stdout_display("The file specified is not a directory");
+        return;
+    }
+}
+
+//______ FINDALL OPERATION SECTION ENDS ______//
+
+
+
+
+
 //______ MAIN SECTION ______//
 
 int check_args_num(int argc, int min, int max)
@@ -1042,7 +1201,7 @@ int main(int argc, char* argv[])
             execute_extract_operation(argc, argv);
             break;
         case 'f':
-            printf("Operation specified: findall\n");
+            execute_findall_operation(argc, argv);
             break;
         case '?':
             DISPLAY_ERR("No valid operation provided");
