@@ -7,6 +7,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 
+#define BUFFER_SIZE 8
 #define PATH_SIZE 1024
 #define MIN_ARGS 2
 #define MAX_ARGS 6
@@ -14,7 +15,7 @@
 #define LIST_MAX_ARGS 6
 #define PARSE_MIN_ARGS 3
 #define PARSE_MAX_ARGS 3
-#define MAX_NR_SECTIONS 16
+
 #define MAGIC_SIZE 4
 #define HEADER_SIZE 2
 #define VERSION_SIZE 2
@@ -24,20 +25,19 @@
 #define SECT_OFFSET_SIZE 4
 #define SECT_SIZE 4
 
-#define MAGIC_OFFSET 0X00
-#define HEADER_SIZE_OFFSET 0X04
-#define VERSION_OFFSET 0X06
+#define MAGIC_OFFSET 0x00
+#define HEADER_SIZE_OFFSET 0x04
+#define VERSION_OFFSET 0x06
 #define NO_OF_SECTIONS_OFFSET 0x08
-#define SECT_HEADERS_START_OFFSET 0X09
-#define SECT_HEADERS_END_OFFSET 0X2E
-#define SECT_NAME_OFFSET 0X09
-#define SECT_OFFSET 0X14
-#define SECT_TYPE_OFFSET 0X10
-#define SECT_SIZE_OFFSET 0X18 
+#define SECT_HEADERS_START_OFFSET 0x09
+#define SECT_HEADERS_END_OFFSET 0x2E
+#define SECT_NAME_OFFSET 0x09
+#define SECT_OFFSET 0x14
+#define SECT_TYPE_OFFSET 0x10
+#define SECT_SIZE_OFFSET 0x18 
 
 
 #define __ERROR_DETECTION
-
 #ifdef __ERROR_DETECTION
 
     void print_trace_stack(const char* file, const char* function, const int line){
@@ -60,44 +60,106 @@
 #endif
 
 
-// GLOBAL VARIABLES SECTION
+
+
+//______ GLOBAL VARIABLES SECTION ______//
 
 const char* program_name = "undefined";
 const char* variant = "43813";
+const char* path = NULL;
 
-// GLOBAL VARIABLES SECTION ENDS --
+//______ GLOBAL VARIABLES SECTION ENDS ______//
 
 
-// DATA STRUCTURES SECTION
 
-typedef struct list_options 
+
+
+//______ DATA STRUCTURES SECTION ______//
+
+struct list_options 
 {
-    char* path;
     char* name_ends_with;
     int have_perm_write;
     int recursive;
-}list_options;
+};
 
-typedef struct fs_file
+struct fs_file
 {
     char* magic;
     unsigned short version;
     unsigned char nr_sections;
     struct fs_file_section** section;
-}fs_file;
+};
 
-typedef struct fs_file_section
+struct fs_file_section
 {
     char* name;
     unsigned int type;
     off_t offset;
     size_t size;
-}section;
+};
 
-// DATA STRUCTUES SECTION ENDS --
+struct part_of_section
+{
+    unsigned short section_no;
+    unsigned int line_no;
+    char* content;
+};
+
+typedef struct list_options list_options;
+typedef struct fs_file fs_file;
+typedef struct fs_file_section section;
+typedef struct part_of_section section_line;
+
+//______ DATA STRUCTURES SECTION ENDS ______//
 
 
-// INITIALIZATION SECTION
+
+
+//______ API SECTION ______//
+
+list_options* create_list();                                                    //
+fs_file* create_fs_file();                                                      // => Init Section
+
+void print_usage();                                                             //
+void stdout_display(char* msg);                                                 // 
+void free_file_contents(fs_file* file);                                         //
+void display_line_content(section_line* line);                                  //
+void display_file_content(fs_file* file);                                       // => Helper Methods Section
+
+void execute_parse_operation(int argc, char* argv[]);                           //
+void fetch_parse_options(int argc, char* argv[]);                               //
+int isOpenDir(int fd);                                                          //
+fs_file* is_fs(int fd);                                                         //
+fs_file* test_parse_constraints(int fd);                                        //
+char* check_magic(int fd);                                                      //
+unsigned short check_version(int fd);                                           //
+int check_no_of_sections(int fd);                                               //
+int check_sections_type(int fd, fs_file* file);                                 // => Parse Operation Section
+
+int execute_list_operation(int argc, char* argv[]);                             //
+list_options* fetch_list_options(int argc, char* argv[]);                       //
+int isDir();                                                                    //
+int is_name_ends_with(char* file_name, char* constraint);                       //
+int is_perm_write();                                                            //
+int list_in_dir(char* name_ends_with, int have_perm_write);                     //
+int recursive_listing(char* name_ends_with, int have_perm_write);               // => List Operation Section
+
+void execute_extract_operation(int argc, char* argv[]);                         //
+section_line* fetch_extract_options(int argc, char* argv[]);                    //
+char* get_line_contents(int fd, fs_file* file, int section_no, int line_no);    // => Extract Operation Section
+
+int check_args_num(int args, int min, int max);                                 //
+int get_options(int argc, char* argv[]);                                        //
+int main(int argc, char* argv[]);                                               // => Main Section
+
+//______ API SECTION ENDS______//
+
+
+
+
+
+//______ INITIALIZATION SECTION ______//
 
 list_options* create_list()
 {
@@ -106,7 +168,6 @@ list_options* create_list()
         DISPLAY_ERR("Memory allocation failed!");
         exit(ENOMEM);
     }
-    list->path = NULL;
     list->have_perm_write = 0;
     list->name_ends_with = NULL;
     list->recursive = 0;
@@ -128,44 +189,35 @@ fs_file* create_fs_file()
     return file;
 }
 
-void display_file_content(fs_file* file)
-{   
-    if(file == NULL){
-        DISPLAY_ERR("Null pointer error!");
-        exit(70);
-    }
-
-    fprintf(stdout,"SUCCESS\nversion=%d\nnr_sections=%d\n", file->version, file->nr_sections);
-    for(int i = 0; i < file->nr_sections; i++)
+section_line* create_section_line()
+{
+    section_line* line = (section_line*)malloc(sizeof(section_line));
+    if(line == NULL)
     {
-        fprintf(stdout, "section%d: %s %d %zu\n", i+1, 
-        file->section[i]->name, file->section[i]->type, file->section[i]->size);
+        DISPLAY_ERR("Unable to allocate memory to fetch the section part");
+        exit(ENOMEM);
     }
+    return line;
 }
 
-// INITIALIZATION SECTION ENDS --
+void display_line_content(section_line* line)
+{
+    if(line == NULL)
+    {
+        DISPLAY_ERR("Dereferencing null pointer");
+        free(line);
+        exit(7);
+    }
+    fprintf(stdout, "SUCCESS\n%s", line->content);
+}
+
+//______ INITIALIZATION SECTION ENDS ______//
 
 
 
-// API SECTION
-
-int get_options(int argc, char* argv[]);
-int check_args_num(int args, int min, int max);
-void print_usage();
-void stdout_display(char* msg);
-struct list_options* fetch_list_options(int argc, char* argv[]);
-int execute_list_operation(int argc, char* argv[]);
-int isDir(char* path);
-int isOpenDir(int fd);
-int is_name_ends_with(char* file_name, char* constraint);
-int is_perm_write(char* path);
-int list_in_dir(char* path, char* name_ends_with, int have_perm_write);
-int recursive_listing(char* path, char* name_ends_with, int have_perm_write);
-
-// API SECTION ENDS --
 
 
-// HELPER METHODS SECTION
+//______ HELPER METHODS SECTION ______//
 
 void print_usage()
 {
@@ -188,89 +240,73 @@ void stdout_display(char* msg)
     fprintf(stdout, "\n%s", msg);
 }
 
-// HELPER METHODS SECTION ENDS --
-
-// list [recursive] <name_ends_with=string || have_perm_write> path=<file_path>
-struct list_options* fetch_list_options(int argc, char* argv[])
+void free_line_content(section_line* line)
 {
-    // at least 2 args should be provided
-    if(!check_args_num(argc, LIST_MIN_ARGS, LIST_MAX_ARGS))
-        return NULL;
-    else
+    if(line == NULL)
+        return;
+    if(line->content != NULL)
     {
-        struct list_options* ops = create_list();
-        for(int i = 1; i < argc; i++)
-        {
-            if(!strcmp(argv[i], "list"))
-            {
-                continue;
-            } 
-            else if(!strcmp(argv[i], "recursive"))
-            {
-                ops->recursive = 1;
-            } 
-            else if(!strncmp(argv[i], "path=", 5))
-            {
-                ops->path = argv[i] + 5;
-            } 
-            else if(!strncmp(argv[i], "name_ends_with=", 15))
-            {
-                ops->name_ends_with = argv[i] + 15;
-            } 
-            else if(!strcmp(argv[i], "have_perm_write"))
-            {
-                ops->have_perm_write = 1;
-            }
-        }
-        if(ops->path == NULL)
-        {
-            DISPLAY_ERR("Path is not specified");
-            print_usage();
-            exit(1);
-        }
-        return ops;
+        free(line->content);
+        line->content = NULL;
     }
+    free(line);
+    line = NULL;
 }
 
-char get_operation(int argc, char* argv[])
+void free_file_contents(fs_file* file)
 {   
-    program_name = argv[0];
-    if(!check_args_num(argc, MIN_ARGS, MAX_ARGS))
+    if(file == NULL)
+        return;
+
+    if(file->magic != NULL)
     {
-        return 0;
+        free(file->magic);
+        file->magic = NULL;
     }
-    char op = '?';
-    for(int i = 1; i < argc; i++)
+        
+    int no_sections = file->nr_sections;
+    for(unsigned char i = 0-1; i < no_sections; ++i)
     {
-        if(    !strcmp(argv[i], "variant") 
-            || !strcmp(argv[i], "list") 
-            || !strcmp(argv[i], "parse") 
-            || !strcmp(argv[i], "extract") 
-            || !strcmp(argv[i], "findall"))
-            {
-                op = argv[i][0]; // store only the first letter of the argument
-            }
+        if(file->section[i] == NULL)
+            break;
+        if(file->section[i]->name != NULL)
+        {
+            free(file->section[i]->name);
+            file->section[i]->name = NULL;
+        }
+        free(file->section[i]);
+        file->section[i] = NULL;
     }
-    return op;
+    if(file->section != NULL)
+        free(file->section);
+    file->section = NULL;
+    free(file);
+    file = NULL;
 }
 
-int check_args_num(int argc, int min, int max)
-{
-    if(argc < min)
-    {
-        printf("Too few arguments!\n");
-        return 0;
-    } 
-    if(argc > max)
-    {
-        stdout_display("Too many arguments!\n");
-        return 0;
+void display_file_content(fs_file* file)
+{   
+    if(file == NULL){
+        DISPLAY_ERR("Null pointer error!");
+        exit(70);
     }
-    return 1;
+
+    fprintf(stdout,"SUCCESS\nversion=%d\nnr_sections=%d\n", file->version, file->nr_sections);
+    for(int i = 0; i < file->nr_sections; i++)
+    {
+        fprintf(stdout, "section%d: %s %d %zu\n", i+1, 
+        file->section[i]->name, file->section[i]->type, file->section[i]->size);
+    }
 }
 
+//______ HELPER METHODS SECTION ENDS ______//
 
-// list [recursive] <name_ends_with=string || have_perm_write> path=<file_path>
+
+
+
+
+//______ LIST OEPRRATION SECTION ______//
+
 int execute_list_operation(int argc, char* argv[])
 {
     list_options* options = fetch_list_options(argc, argv);
@@ -282,17 +318,17 @@ int execute_list_operation(int argc, char* argv[])
     }
 
     int result;
-    if(isDir(options->path))
+    if(isDir())
         if(options->recursive)
         {
             printf("SUCCESS");
-            result = recursive_listing(options->path, options->name_ends_with, options->have_perm_write);
+            result = recursive_listing(options->name_ends_with, options->have_perm_write);
             free(options);
             return result;
         }
         else
         {
-            result = list_in_dir(options->path, options->name_ends_with, options->have_perm_write);
+            result = list_in_dir(options->name_ends_with, options->have_perm_write);
             free(options);
             return result;
         }
@@ -306,22 +342,52 @@ int execute_list_operation(int argc, char* argv[])
     return 0;
 }
 
-int isDir(char* path)
+// list [recursive] <name_ends_with=string || have_perm_write> path=<file_path>
+struct list_options* fetch_list_options(int argc, char* argv[])
+{
+    // at least 2 args should be provided
+    if(!check_args_num(argc, LIST_MIN_ARGS, LIST_MAX_ARGS))
+        return NULL;
+    else
+    {
+        struct list_options* ops = create_list(); // FUNCTION FROM THE INITIALIZATION SECTION
+        for(int i = 1; i < argc; i++)
+        {
+            if(!strcmp(argv[i], "list"))
+            {
+                continue;
+            } 
+            else if(!strcmp(argv[i], "recursive"))
+            {
+                ops->recursive = 1;
+            } 
+            else if(!strncmp(argv[i], "path=", 5))
+            {
+                path = argv[i] + 5;
+            } 
+            else if(!strncmp(argv[i], "name_ends_with=", 15))
+            {
+                ops->name_ends_with = argv[i] + 15;
+            } 
+            else if(!strcmp(argv[i], "have_perm_write"))
+            {
+                ops->have_perm_write = 1;
+            }
+        }
+        if(path == NULL)
+        {
+            DISPLAY_ERR("Path is not specified");
+            print_usage();
+            exit(1);
+        }
+        return ops;
+    }
+}
+
+int isDir()
 {
     struct stat info;
     int get_stat = lstat(path, &info);
-    if(get_stat == -1)
-    {
-        DISPLAY_ERR("Error fetching file statistics");
-        exit(3);
-    }
-    return S_ISDIR(info.st_mode) ? 1 : 0;
-}
-
-int isOpenDir(int fd)
-{
-    struct stat info;
-    int get_stat = fstat(fd, &info);
     if(get_stat == -1)
     {
         DISPLAY_ERR("Error fetching file statistics");
@@ -339,7 +405,7 @@ int is_name_ends_with(char* file_name, char* constraint)
     else return strncmp(file_name + name_length - const_len, constraint, const_len) == 0;
 }
 
-int is_perm_write(char* path)
+int is_perm_write()
 {
     struct stat info;
     int get_stat = stat(path, &info);
@@ -353,7 +419,7 @@ int is_perm_write(char* path)
     else return 0;
 }
 
-int list_in_dir(char* path, char* name_ends_with, int have_perm_write)
+int list_in_dir(char* name_ends_with, int have_perm_write)
 {   
     struct stat info;
     struct dirent* entry;
@@ -380,7 +446,6 @@ int list_in_dir(char* path, char* name_ends_with, int have_perm_write)
 
         if(name_ends_with != NULL && !have_perm_write)
         {
-
             if(is_name_ends_with(entry->d_name, name_ends_with) && is_perm_write(entry_path))
                 stdout_display(entry_path);
             else continue;
@@ -405,7 +470,7 @@ int list_in_dir(char* path, char* name_ends_with, int have_perm_write)
     return 1;
 }
 
-int recursive_listing(char* path, char* name_ends_with, int have_perm_write)
+int recursive_listing(char* name_ends_with, int have_perm_write)
 {
     struct stat info = {0};
     struct dirent* entry = NULL;
@@ -456,7 +521,7 @@ int recursive_listing(char* path, char* name_ends_with, int have_perm_write)
         {
             if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
                 continue;
-            recursive_listing(entry_path, name_ends_with, have_perm_write);
+            recursive_listing(name_ends_with, have_perm_write);
         }
     }
     if(exit == 1)
@@ -464,38 +529,26 @@ int recursive_listing(char* path, char* name_ends_with, int have_perm_write)
     return 1;
 }
 
-void free_file_contents(fs_file* file)
-{   
-    if(file == NULL)
-        return;
+//______ LIST OEPRATION SECTION ENDS ______//
 
-    if(file->magic != NULL)
+
+
+
+//______ PARSE OEPRATION SECTION ______//
+
+int isOpenDir(int fd)
+{
+    struct stat info;
+    int get_stat = fstat(fd, &info);
+    if(get_stat == -1)
     {
-        free(file->magic);
-        file->magic = NULL;
+        DISPLAY_ERR("Error fetching file statistics");
+        exit(3);
     }
-        
-    int no_sections = file->nr_sections;
-    for(unsigned char i = 0-1; i < no_sections; ++i)
-    {
-        if(file->section[i] == NULL)
-            break;
-        if(file->section[i]->name != NULL)
-        {
-            free(file->section[i]->name);
-            file->section[i]->name = NULL;
-        }
-        free(file->section[i]);
-        file->section[i] = NULL;
-    }
-    if(file->section != NULL)
-        free(file->section);
-    file->section = NULL;
-    free(file);
-    file = NULL;
+    return S_ISDIR(info.st_mode) ? 1 : 0;
 }
 
-// "8maz"
+// magic = "8maz"
 char* check_magic(int fd)
 {
     char* magic_buffer = malloc( (MAGIC_SIZE + 1) * sizeof(char));
@@ -561,7 +614,7 @@ unsigned short check_version(int fd)
 }
 
 // must be 2 or between [7, 15]
-int check_sections_nr(int fd)
+int check_no_of_sections(int fd)
 {
     unsigned char section_buffer = '\0';
     int read_bytes = 0;
@@ -585,12 +638,13 @@ int check_sections_nr(int fd)
     return 0;
 }
 
+// must be 88 or 31
 int check_sections_type(int fd, fs_file* file)
 {
     if(file == NULL)
         return 0;
 
-    file->section = (section**)malloc(file->nr_sections * sizeof(section)); // allocate memory based on the number
+    file->section = (section**)malloc(file->nr_sections * sizeof(section*)); // allocate memory based on the number
     // of the sections specified in the fs file
     if(file->section == NULL)
     {
@@ -612,7 +666,7 @@ int check_sections_type(int fd, fs_file* file)
     int global_seek = seek;
     for(int i = 0; i < file->nr_sections; ++i)
     {
-        file->section[i] = (section*)malloc(sizeof(section));
+        file->section[i] = (section*)malloc(sizeof(section*));
 
         // READ SECTION NAME
         char* section_name = (char*)malloc((SECT_NAME_SIZE + 1) * sizeof(char));
@@ -709,7 +763,7 @@ int check_sections_type(int fd, fs_file* file)
     return 1;
 }
 
-fs_file* test_parse_constraints(char* path, int fd)
+fs_file* test_parse_constraints(int fd)
 {
     fs_file* file = create_fs_file();
 
@@ -719,7 +773,7 @@ fs_file* test_parse_constraints(char* path, int fd)
     if(!(file->version = check_version(fd)))
         DISPLAY_ERR("Wrong version\n");
 
-    if(!(file->nr_sections = check_sections_nr(fd)))
+    if(!(file->nr_sections = check_no_of_sections(fd)))
         DISPLAY_ERR("Wrong sect_nr\n");
 
     if(!(check_sections_type(fd, file)))
@@ -728,19 +782,14 @@ fs_file* test_parse_constraints(char* path, int fd)
     return file;
 }
 
-fs_file* is_fs(char* path, int fd)
+fs_file* is_fs(int fd)
 { 
-    fs_file* file = test_parse_constraints(path, fd);
+    fs_file* file = test_parse_constraints(fd);
     return file;
 }
 
-// parse path=<file_name>
-void execute_parse_operation(int argc, char* argv[])
+void fetch_parse_options(int argc, char* argv[])
 {
-    if(!check_args_num(argc, PARSE_MIN_ARGS, PARSE_MAX_ARGS))
-        return;
-
-    char* path = NULL;
     for(int i = 1; i < argc; i++)
     {
         if(!strcmp(argv[i], "parse"))
@@ -758,6 +807,15 @@ void execute_parse_operation(int argc, char* argv[])
             exit(1);
         }
     }
+}
+
+// parse path=<file_name>
+void execute_parse_operation(int argc, char* argv[])
+{
+    if(!check_args_num(argc, PARSE_MIN_ARGS, PARSE_MAX_ARGS))
+        return;
+
+    fetch_parse_options(argc, argv);
 
     int fd = open(path, O_RDONLY);
     if(fd == -1)
@@ -774,7 +832,7 @@ void execute_parse_operation(int argc, char* argv[])
         exit(1);
     }
 
-    fs_file* file = is_fs(path, fd);
+    fs_file* file = is_fs(fd);
     if(file != NULL)
     {
         display_file_content(file);
@@ -782,6 +840,186 @@ void execute_parse_operation(int argc, char* argv[])
 
     free_file_contents(file);
     close(fd);
+}
+
+//______ PARSE OPERATION SECTION ENDS ______//
+
+
+
+
+
+//______ EXTRACT OPERATION SECTION ______//
+
+void execute_extract_operation(int argc, char* argv[])
+{   
+
+    section_line* line = fetch_extract_options(argc, argv);
+    // printf("line no =%d\n", line->line_no);
+    if(isDir())
+    {
+        free_line_content(line);
+        DISPLAY_ERR("Error type DIRECTORY");
+        exit(1);
+    }
+
+    int fd = open(path, O_RDONLY);
+    if(fd < 0)
+    {
+        free_line_content(line);
+        DISPLAY_ERR("Cannot open the file");
+        exit(1);
+    }
+    fs_file* file = create_fs_file();
+    file = is_fs(fd);
+    // display_file_content(file);
+    if(file != NULL)
+    {
+        if((line->content = get_line_contents(fd, file, line->section_no, line->line_no)) > 0)
+        {
+            // printf("\nline content %s", line->content);
+            display_line_content(line);
+        }
+        else
+        {
+            DISPLAY_ERR("Unable to fetch line contents");
+        }
+    }
+    free_line_content(line);
+    free_file_contents(file);
+}
+
+section_line* fetch_extract_options(int argc, char* argv[])
+{
+    section_line* line = create_section_line();
+    for(int i = 1; i < argc; i++)
+    {
+        if(!strcmp(argv[i], "extract"))
+        {
+            continue;
+        }
+        else if(!strncmp(argv[i], "path=", 5))
+        {
+            path = argv[i] + 5;
+        }
+        else if(!strncmp(argv[i], "section=", 8))
+        {
+            line->section_no = atoi(argv[i] + 8);
+        }
+        else if(!strncmp(argv[i], "line=", 5))
+        {
+            line->line_no = atoi(argv[i] + 5);
+        }
+        else
+        {
+            DISPLAY_ERR("Invalid input");
+            print_usage();
+            exit(1);
+        }
+    }
+    return line;
+}
+
+char* get_line_contents(int fd, fs_file* file, int section_no, int line_no) {
+    off_t section_offset = file->section[section_no - 1]->offset;
+    size_t section_size = file->section[section_no - 1]->size;
+
+    if (lseek(fd, section_offset, SEEK_SET) < 0) {
+        DISPLAY_ERR("Unable to set position pointer");
+        return NULL;
+    }
+
+    char line_content[section_size + 1]; 
+    ssize_t total_read = 0;
+    ssize_t read_bytes;
+
+    while ((read_bytes = read(fd, line_content + total_read, section_size - total_read)) > 0) {
+        if (read_bytes < 0) {
+            DISPLAY_ERR("Error reading file");
+            return NULL;
+        }
+        total_read += read_bytes;
+        if (total_read >= section_size || line_content[total_read - 1] == '\n') {
+            break;
+        }
+        printf("read bytes = %s\n", line_content);
+    }
+
+
+    line_content[total_read] = '\0'; 
+
+    // Find the beginning of the line
+    char* line_start = line_content;
+    for (int i = 0; i < line_no - 1; i++) {
+        line_start = strchr(line_start, '\n');
+        if (line_start == NULL) {
+            DISPLAY_ERR("Line number exceeds section size");
+            return NULL;
+        }
+        line_start++; // Move past the '\n'
+    }
+
+    // Find the end of the line
+    char* line_end = strchr(line_start, '\n');
+    if (line_end == NULL) {
+        line_end = line_content + total_read; 
+    }
+
+    size_t line_length = line_end - line_start;
+
+    char* content = malloc((line_length + 1) * sizeof(char)); 
+    if (content == NULL) {
+        DISPLAY_ERR("Memory allocation failed");
+        return NULL;
+    }
+    strncpy(content, line_start, line_length);
+    content[line_length] = '\0'; 
+
+    return content;
+}
+
+//______ EXTRACT OPERATION SECTION ENDS ______//
+
+
+
+
+
+//______ MAIN SECTION ______//
+
+int check_args_num(int argc, int min, int max)
+{
+    if(argc < min)
+    {
+        printf("Too few arguments!\n");
+        return 0;
+    } 
+    if(argc > max)
+    {
+        stdout_display("Too many arguments!\n");
+        return 0;
+    }
+    return 1;
+}
+
+char get_operation(int argc, char* argv[])
+{   
+    program_name = argv[0];
+    if(!check_args_num(argc, MIN_ARGS, MAX_ARGS))
+    {
+        return 0;
+    }
+    char op = '?';
+    for(int i = 1; i < argc; i++)
+    {
+        if(    !strcmp(argv[i], "variant") 
+            || !strcmp(argv[i], "list") 
+            || !strcmp(argv[i], "parse") 
+            || !strcmp(argv[i], "extract") 
+            || !strcmp(argv[i], "findall"))
+            {
+                op = argv[i][0]; // store only the first letter of the argument
+            }
+    }
+    return op;
 }
 
 int main(int argc, char* argv[])
@@ -801,7 +1039,7 @@ int main(int argc, char* argv[])
             execute_parse_operation(argc, argv);
             break;
         case 'e':
-            printf("Operation specified: extract\n");
+            execute_extract_operation(argc, argv);
             break;
         case 'f':
             printf("Operation specified: findall\n");
@@ -817,4 +1055,6 @@ int main(int argc, char* argv[])
     }
     return 0;
 }
+
+//______ MAIN SECTION ENDS ______//
 
