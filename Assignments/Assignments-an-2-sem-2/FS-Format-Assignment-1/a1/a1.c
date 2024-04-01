@@ -121,42 +121,53 @@ typedef struct part_of_section section_line;
 
 
 
+
 //______ API SECTION ______//
 
-list_options* create_list();                                                    //
-fs_file* create_fs_file();                                                      // => Init Section
+section_line* create_section_line();                                                //
+void display_line_content(section_line* line);                                      //                                      
+list_options* create_list();                                                        //
+fs_file* create_fs_file();                                                          // => Init Section
+    
+void print_usage();                                                                 //
+void stdout_display(char* msg);                                                     // 
+void free_file_contents(fs_file* file);                                             //
+void display_line_content(section_line* line);                                      //
+void display_file_content(fs_file* file);                                           // => Helper Methods Section
 
-void print_usage();                                                             //
-void stdout_display(char* msg);                                                 // 
-void free_file_contents(fs_file* file);                                         //
-void display_line_content(section_line* line);                                  //
-void display_file_content(fs_file* file);                                       // => Helper Methods Section
+int execute_list_operation(int argc, char* argv[]);                                 //
+list_options* fetch_list_options(int argc, char* argv[]);                           //
+int isDir(const char* path);                                                        //
+int is_name_ends_with(char* file_name, char* constraint);                           //
+int is_perm_write();                                                                //
+int list_in_dir(const char* path, char* name_ends_with, int has_perm_write);        //
+int recursive_listing(const char* path, char* name_ends_with, int has_perm_write);  // => List Operation Section
+    
+void execute_parse_operation(int argc, char* argv[]);                               //
+void fetch_parse_options(int argc, char* argv[]);                                   //
+int isOpenDir(int fd);                                                              //
+fs_file* is_fs(int fd);                                                             //
+fs_file* test_parse_constraints(int fd);                                            //
+char* check_magic(int fd);                                                          //
+unsigned short check_version(int fd);                                               //
+int check_no_of_sections(int fd);                                                   //
+int check_sections_type(int fd, fs_file* file);                                     // => Parse Operation Section
 
-void execute_parse_operation(int argc, char* argv[]);                           //
-void fetch_parse_options(int argc, char* argv[]);                               //
-int isOpenDir(int fd);                                                          //
-fs_file* is_fs(int fd);                                                         //
-fs_file* test_parse_constraints(int fd);                                        //
-char* check_magic(int fd);                                                      //
-unsigned short check_version(int fd);                                           //
-int check_no_of_sections(int fd);                                               //
-int check_sections_type(int fd, fs_file* file);                                 // => Parse Operation Section
+void execute_extract_operation(int argc, char* argv[]);                             //
+section_line* fetch_extract_options(int argc, char* argv[]);                        //
+char* get_line_contents(int fd, fs_file* file, int section_no, int line_no);        // => Extract Operation Section
 
-int execute_list_operation(int argc, char* argv[]);                             //
-list_options* fetch_list_options(int argc, char* argv[]);                       //
-int isDir(const char* path);                                                                    //
-int is_name_ends_with(char* file_name, char* constraint);                       //
-int is_perm_write();                                                            //
-int list_in_dir(const char* path, char* name_ends_with, int has_perm_write);                     //
-int recursive_listing(const char* path, char* name_ends_with, int has_perm_write);               // => List Operation Section
 
-void execute_extract_operation(int argc, char* argv[]);                         //
-section_line* fetch_extract_options(int argc, char* argv[]);                    //
-char* get_line_contents(int fd, fs_file* file, int section_no, int line_no);    // => Extract Operation Section
+fs_file* test_constraints(int fd);                                                  //
+int check_section_size(fs_file* file);                                              //
+void process_files(const char* entry_path);                                         //
+void findall_recursive(const char* entry_path);                                     //
+void fetch_findall_options(int argc, char* argv[]);                                 //
+void execute_findall_operation(int argc, char* argv[]);                             // => Findall Operation Section
 
-int check_args_num(int args, int min, int max);                                 //
-int get_options(int argc, char* argv[]);                                        //
-int main(int argc, char* argv[]);                                               // => Main Section
+int check_args_num(int args, int min, int max);                                     //
+int get_options(int argc, char* argv[]);                                            //
+int main(int argc, char* argv[]);                                                   // => Main Section
 
 //______ API SECTION ENDS______//
 
@@ -310,7 +321,7 @@ void display_file_content(fs_file* file)
 
 
 
-//______ LIST OEPRRATION SECTION ______//
+//______ LIST OPERATION SECTION ______//
 
 int execute_list_operation(int argc, char* argv[])
 {
@@ -530,7 +541,7 @@ int recursive_listing(const char* et_path, char* name_ends_with, int has_perm_wr
     return 1;
 }
 
-//______ LIST OEPRATION SECTION ENDS ______//
+//______ LIST OPERATION SECTION ENDS ______//
 
 
 
@@ -1000,8 +1011,41 @@ char* get_line_contents(int fd, fs_file* file, int section_no, int line_no) {
 
 
 
-//______ EXTRACT OPERATION SECTION ______//
 
+//______ FINDALL OPERATION SECTION ______//
+
+fs_file* test_constraints(int fd)
+{
+    fs_file* file = create_fs_file();
+
+    if(!(file->magic = check_magic(fd)))
+    {
+        free_file_contents(file);
+        return NULL;
+    }
+
+    if(!(file->version = check_version(fd)))
+    {
+        free_file_contents(file);
+        return NULL;
+    }
+
+    if(!(file->nr_sections = check_no_of_sections(fd)))
+    {
+        free_file_contents(file);
+        return NULL;
+    }
+
+    if(!(check_sections_type(fd, file)))
+    {
+        free_file_contents(file);
+        return NULL;
+    }
+
+    return file;
+}
+
+// no section with size greater than 1481.
 int check_section_size(fs_file* file)
 {
     unsigned char nr_sections = file->nr_sections;
@@ -1014,7 +1058,6 @@ int check_section_size(fs_file* file)
     return 1;
 }
 
-// no section with size greater than 1481.
 void process_files(const char* entry_path) {
     DIR* dir = opendir(entry_path);
     if (dir == NULL) {
@@ -1045,7 +1088,7 @@ void process_files(const char* entry_path) {
                 continue;
             }
 
-            fs_file* file = is_fs(fd);
+            fs_file* file = test_constraints(fd);
             if (file != NULL && check_section_size(file))
                 stdout_display(abs_path);
 
