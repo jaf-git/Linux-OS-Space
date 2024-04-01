@@ -84,7 +84,7 @@ const char* path = NULL;
 struct list_options 
 {
     char* name_ends_with;
-    int have_perm_write;
+    int has_perm_write;
     int recursive;
 };
 
@@ -144,11 +144,11 @@ int check_sections_type(int fd, fs_file* file);                                 
 
 int execute_list_operation(int argc, char* argv[]);                             //
 list_options* fetch_list_options(int argc, char* argv[]);                       //
-int isDir();                                                                    //
+int isDir(const char* path);                                                                    //
 int is_name_ends_with(char* file_name, char* constraint);                       //
 int is_perm_write();                                                            //
-int list_in_dir(char* name_ends_with, int have_perm_write);                     //
-int recursive_listing(char* name_ends_with, int have_perm_write);               // => List Operation Section
+int list_in_dir(const char* path, char* name_ends_with, int has_perm_write);                     //
+int recursive_listing(const char* path, char* name_ends_with, int has_perm_write);               // => List Operation Section
 
 void execute_extract_operation(int argc, char* argv[]);                         //
 section_line* fetch_extract_options(int argc, char* argv[]);                    //
@@ -173,7 +173,7 @@ list_options* create_list()
         DISPLAY_ERR("Memory allocation failed!");
         exit(ENOMEM);
     }
-    list->have_perm_write = 0;
+    list->has_perm_write = 0;
     list->name_ends_with = NULL;
     list->recursive = 0;
     return list;
@@ -231,7 +231,7 @@ List of operations:\n\
 |-> variant     -displays the identifier of the assignment variant\n\
 | SYNTAX: variant\n\
 |-> list        -display the names of some elements in the specified path\n\
-| SYNTAX: list [recursive] <name_ends_with=string || have_perm_write> path=<file_path>\n\
+| SYNTAX: list [recursive] <name_ends_with=string || has_perm_write> path=<file_path>\n\
 |-> parse       -check if the file in the specified path complies or not the SF format.\n\
 | SYNTAX: parse path=<file_path>\n\
 |-> extract     -display some part of a certain section of a SF file.\n\
@@ -323,17 +323,18 @@ int execute_list_operation(int argc, char* argv[])
     }
 
     int result;
-    if(isDir())
+    if(isDir(path))
         if(options->recursive)
         {
             printf("SUCCESS");
-            result = recursive_listing(options->name_ends_with, options->have_perm_write);
+            result = recursive_listing(path, options->name_ends_with, options->has_perm_write);
             free(options);
             return result;
         }
         else
         {
-            result = list_in_dir(options->name_ends_with, options->have_perm_write);
+            printf("SUCCESS");
+            result = list_in_dir(path, options->name_ends_with, options->has_perm_write);
             free(options);
             return result;
         }
@@ -347,7 +348,7 @@ int execute_list_operation(int argc, char* argv[])
     return 0;
 }
 
-// list [recursive] <name_ends_with=string || have_perm_write> path=<file_path>
+// list [recursive] <name_ends_with=string || has_perm_write> path=<file_path>
 struct list_options* fetch_list_options(int argc, char* argv[])
 {
     // at least 2 args should be provided
@@ -374,9 +375,9 @@ struct list_options* fetch_list_options(int argc, char* argv[])
             {
                 ops->name_ends_with = argv[i] + 15;
             } 
-            else if(!strcmp(argv[i], "have_perm_write"))
+            else if(!strcmp(argv[i], "has_perm_write"))
             {
-                ops->have_perm_write = 1;
+                ops->has_perm_write = 1;
             }
         }
         if(path == NULL)
@@ -389,7 +390,7 @@ struct list_options* fetch_list_options(int argc, char* argv[])
     }
 }
 
-int isDir()
+int isDir(const char* path)
 {
     struct stat info;
     int get_stat = lstat(path, &info);
@@ -410,10 +411,10 @@ int is_name_ends_with(char* file_name, char* constraint)
     else return strncmp(file_name + name_length - const_len, constraint, const_len) == 0;
 }
 
-int is_perm_write()
+int is_perm_write(const char* entry_path)
 {
     struct stat info;
-    int get_stat = stat(path, &info);
+    int get_stat = stat(entry_path, &info);
     if(get_stat == -1)
     {
         DISPLAY_ERR("Error fetching file statistics");
@@ -424,22 +425,21 @@ int is_perm_write()
     else return 0;
 }
 
-int list_in_dir(char* name_ends_with, int have_perm_write)
+int list_in_dir(const char* et_path, char* name_ends_with, int has_perm_write)
 {   
     struct stat info;
     struct dirent* entry;
     char entry_path[PATH_SIZE];
 
-    DIR* dir = opendir(path);
+    DIR* dir = opendir(et_path);
     if(dir < 0)
     {
         DISPLAY_ERR("Enable to open a directory");
         return 0;
     }
-    printf("SUCCESS");
     while((entry = readdir(dir)))
     {
-        snprintf(entry_path, sizeof(entry_path), "%s/%s", path, entry->d_name);
+        snprintf(entry_path, sizeof(entry_path), "%s/%s", et_path, entry->d_name);
         int get_stat = stat(entry_path, &info);
         if(get_stat < 0)
         {
@@ -449,23 +449,20 @@ int list_in_dir(char* name_ends_with, int have_perm_write)
         if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
 
-        if(name_ends_with != NULL && !have_perm_write)
+        if(name_ends_with != NULL && has_perm_write)
         {
             if(is_name_ends_with(entry->d_name, name_ends_with) && is_perm_write(entry_path))
                 stdout_display(entry_path);
-            else continue;
         } 
         else if (name_ends_with != NULL)
         {
             if(is_name_ends_with(entry->d_name, name_ends_with))
                 stdout_display(entry_path);
-            else continue;
         } 
-        else if(is_perm_write(entry_path))
+        else if(has_perm_write)
         {
             if(is_perm_write(entry_path))
                 stdout_display(entry_path);
-            else continue;
         } 
         else 
         {
@@ -475,14 +472,14 @@ int list_in_dir(char* name_ends_with, int have_perm_write)
     return 1;
 }
 
-int recursive_listing(char* name_ends_with, int have_perm_write)
+int recursive_listing(const char* et_path, char* name_ends_with, int has_perm_write)
 {
     struct stat info = {0};
     struct dirent* entry = NULL;
     char entry_path[PATH_SIZE] = {0};
     int exit = 0;
 
-    DIR* dir = opendir(path);
+    DIR* dir = opendir(et_path);
     if(dir < 0)
     {
         DISPLAY_ERR("Enable to open a directory");
@@ -490,7 +487,7 @@ int recursive_listing(char* name_ends_with, int have_perm_write)
     }
     while((entry = readdir(dir)))
     {
-        snprintf(entry_path, sizeof(entry_path), "%s/%s", path, entry->d_name);
+        snprintf(entry_path, sizeof(entry_path), "%s/%s", et_path, entry->d_name);
         int get_stat = lstat(entry_path, &info);
         if(get_stat != 0){
             DISPLAY_ERR("Error fetching file statistics");
@@ -498,39 +495,38 @@ int recursive_listing(char* name_ends_with, int have_perm_write)
             return 0;
         }
         if(!S_ISDIR(info.st_mode))
-        {
-            if(name_ends_with != NULL && !have_perm_write)
+        {   
+            if(!name_ends_with && !has_perm_write)
+                stdout_display(entry_path);
+            else if(name_ends_with != NULL && has_perm_write)
             {
                 if(is_name_ends_with(entry->d_name, name_ends_with) && is_perm_write(entry_path))
                     stdout_display(entry_path);
-                else continue;
             } 
             else if (name_ends_with != NULL)
             {
                 if(is_name_ends_with(entry->d_name, name_ends_with))
                     stdout_display(entry_path);
-                else continue;
             } 
-            else if(is_perm_write(entry_path))
+            else if(has_perm_write)
             {
                 if(is_perm_write(entry_path))
                     stdout_display(entry_path);
-                else continue;
             } 
-            else 
-            {
-                stdout_display(entry_path);
-            }
         } 
         else if(S_ISDIR(info.st_mode))
-        {
+        {   
             if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
                 continue;
-            recursive_listing(name_ends_with, have_perm_write);
+            stdout_display(entry_path);
+            // list_in_dir(entry_path, name_ends_with, has_perm_write);
+            recursive_listing(entry_path, name_ends_with, has_perm_write);
+            
         }
     }
     if(exit == 1)
         return 0;
+    closedir(dir);
     return 1;
 }
 
@@ -875,8 +871,7 @@ void execute_extract_operation(int argc, char* argv[])
 {   
 
     section_line* line = fetch_extract_options(argc, argv);
-    // printf("line no =%d\n", line->line_no);
-    if(isDir())
+    if(isDir(path))
     {
         free_line_content(line);
         DISPLAY_ERR("Error type DIRECTORY");
@@ -892,12 +887,10 @@ void execute_extract_operation(int argc, char* argv[])
     }
     fs_file* file = create_fs_file();
     file = is_fs(fd);
-    // display_file_content(file);
     if(file != NULL)
     {
         if((line->content = get_line_contents(fd, file, line->section_no, line->line_no)) > 0)
         {
-            // printf("\nline content %s", line->content);
             display_line_content(line);
         }
         else
@@ -1124,7 +1117,7 @@ void execute_findall_operation(int argc, char* argv[])
         DISPLAY_ERR("Unable to fetch the path variable");
         return;
     }
-    if(isDir())
+    if(isDir(path))
     {
         printf("SUCCESS");
         findall_recursive(path);
