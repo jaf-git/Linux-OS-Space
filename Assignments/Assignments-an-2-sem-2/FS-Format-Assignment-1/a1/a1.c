@@ -1,3 +1,13 @@
+
+/////////////////////////////////////////////////
+//
+//	STUDENT NAME: ABO FAKHER JAWAD
+//	GROUP: 30421
+//	ASSIGNMENT NR: 1
+//	TESTS PASSED: 65/65
+//
+/////////////////////////////////////////////////
+
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
@@ -69,9 +79,9 @@
 
 //______ GLOBAL VARIABLES SECTION ______//
 
-const char* program_name = "undefined";
-const char* variant = "43813";
-const char* path = NULL;
+char program_name[5] = {'\0'};
+char variant[6] = "43813";
+char* path = NULL;
 
 //______ GLOBAL VARIABLES SECTION ENDS ______//
 
@@ -130,12 +140,13 @@ list_options* create_list();                                                    
 fs_file* create_fs_file();                                                          // => Init Section
     
 void print_usage();                                                                 //
+void free_list_options(list_options* list);                                         //
 void stdout_display(char* msg);                                                     // 
 void free_file_contents(fs_file* file);                                             //
 void display_line_content(section_line* line);                                      //
 void display_file_content(fs_file* file);                                           // => Helper Methods Section
 
-int execute_list_operation(int argc, char* argv[]);                                 //
+void execute_list_operation(int argc, char* argv[]);                                //
 list_options* fetch_list_options(int argc, char* argv[]);                           //
 int isDir(const char* path);                                                        //
 int is_name_ends_with(char* file_name, char* constraint);                           //
@@ -155,7 +166,7 @@ int check_sections_type(int fd, fs_file* file);                                 
 
 void execute_extract_operation(int argc, char* argv[]);                             //
 section_line* fetch_extract_options(int argc, char* argv[]);                        //
-char* get_line_contents(int fd, fs_file* file, int section_no, int line_no);        // => Extract Operation Section
+char* get_line_contents(int fd, fs_file* file, section_line* line);                 // => Extract Operation Section
 
 
 fs_file* test_constraints(int fd);                                                  //
@@ -179,9 +190,14 @@ int main(int argc, char* argv[]);                                               
 
 list_options* create_list()
 {
-    list_options* list = malloc(sizeof(list_options));
+    list_options* list = (list_options*)malloc(sizeof(list_options));
     if(list == NULL){
         DISPLAY_ERR("Memory allocation failed!");
+        if(path != NULL)
+        {
+            free(path);
+            path = NULL;
+        }
         exit(ENOMEM);
     }
     list->has_perm_write = 0;
@@ -193,7 +209,7 @@ list_options* create_list()
 fs_file* create_fs_file()
 {
     fs_file* file = (fs_file*)malloc(sizeof(fs_file));
-    if(file==NULL)
+    if(file == NULL)
     {
         DISPLAY_ERR("Memory allocation error - fs file");
         exit(ENOMEM);
@@ -256,6 +272,19 @@ void stdout_display(char* msg)
     fprintf(stdout, "\n%s", msg);
 }
 
+void free_list_options(list_options* list)
+{
+    if(list == NULL)
+        return;
+    if(list->name_ends_with != NULL)
+    {
+        free(list->name_ends_with);
+        list->name_ends_with = NULL;
+    }
+    free(list);
+    list = NULL;
+}
+
 void free_line_content(section_line* line)
 {
     if(line == NULL)
@@ -281,10 +310,10 @@ void free_file_contents(fs_file* file)
     }
         
     int no_sections = file->nr_sections;
-    for(unsigned char i = 0-1; i < no_sections; ++i)
+    for(unsigned char i = 0; i < no_sections; ++i)
     {
         if(file->section[i] == NULL)
-            break;
+            continue;
         if(file->section[i]->name != NULL)
         {
             free(file->section[i]->name);
@@ -323,40 +352,34 @@ void display_file_content(fs_file* file)
 
 //______ LIST OPERATION SECTION ______//
 
-int execute_list_operation(int argc, char* argv[])
+void execute_list_operation(int argc, char* argv[])
 {
     list_options* options = fetch_list_options(argc, argv);
     if(options == NULL)
     {
-        free(options);
         DISPLAY_ERR("Error fetching list operations - Null pointer err");
-        exit(60);
+        free_list_options(options);
+        return;
     }
 
-    int result;
     if(isDir(path))
+    {
         if(options->recursive)
         {
             printf("SUCCESS");
-            result = recursive_listing(path, options->name_ends_with, options->has_perm_write);
-            free(options);
-            return result;
+            recursive_listing(path, options->name_ends_with, options->has_perm_write);
         }
         else
         {
             printf("SUCCESS");
-            result = list_in_dir(path, options->name_ends_with, options->has_perm_write);
-            free(options);
-            return result;
+            list_in_dir(path, options->name_ends_with, options->has_perm_write);
         }
+    }
     else 
     {
-        free(options);
         DISPLAY_ERR("The file specified is not a directory");
-        exit(4);
     }
-    free(options);
-    return 0;
+    free_list_options(options);
 }
 
 // list [recursive] <name_ends_with=string || has_perm_write> path=<file_path>
@@ -384,7 +407,12 @@ struct list_options* fetch_list_options(int argc, char* argv[])
             } 
             else if(!strncmp(argv[i], "name_ends_with=", 15))
             {
-                ops->name_ends_with = argv[i] + 15;
+                int length = strlen(argv[i] + 15);
+                if(length > 0)
+                {
+                    // ops->name_ends_with = malloc(length * sizeof(char));     
+                    ops->name_ends_with = argv[i] + 15;
+                }
             } 
             else if(!strcmp(argv[i], "has_perm_write"))
             {
@@ -394,21 +422,22 @@ struct list_options* fetch_list_options(int argc, char* argv[])
         if(path == NULL)
         {
             DISPLAY_ERR("Path is not specified");
+            free_list_options(ops);
             print_usage();
-            exit(1);
+            return NULL;
         }
         return ops;
     }
 }
 
-int isDir(const char* path)
+int isDir(const char* file_path)
 {
     struct stat info;
-    int get_stat = lstat(path, &info);
+    int get_stat = lstat(file_path, &info);
     if(get_stat == -1)
     {
         DISPLAY_ERR("Error fetching file statistics");
-        exit(3);
+        return 0;
     }
     return S_ISDIR(info.st_mode) ? 1 : 0;
 }
@@ -480,6 +509,7 @@ int list_in_dir(const char* et_path, char* name_ends_with, int has_perm_write)
             stdout_display(entry_path);
         }
     }
+    closedir(dir);
     return 1;
 }
 
@@ -530,7 +560,6 @@ int recursive_listing(const char* et_path, char* name_ends_with, int has_perm_wr
             if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
                 continue;
             stdout_display(entry_path);
-            // list_in_dir(entry_path, name_ends_with, has_perm_write);
             recursive_listing(entry_path, name_ends_with, has_perm_write);
             
         }
@@ -555,7 +584,7 @@ int isOpenDir(int fd)
     if(get_stat == -1)
     {
         DISPLAY_ERR("Error fetching file statistics");
-        exit(3);
+        return 0;
     }
     return S_ISDIR(info.st_mode) ? 1 : 0;
 }
@@ -678,13 +707,13 @@ int check_sections_type(int fd, fs_file* file)
     int global_seek = seek;
     for(int i = 0; i < file->nr_sections; ++i)
     {
-        file->section[i] = (section*)malloc(sizeof(section*));
+        file->section[i] = (section*)malloc(sizeof(section));
 
         // READ SECTION NAME
         char* section_name = (char*)malloc((SECT_NAME_SIZE + 1) * sizeof(char));
         if((read_bytes = read(fd, section_name, sizeof(section_name))) >= 0){
             section_name[SECT_NAME_SIZE] = '\0';
-            file->section[i]->name = malloc((SECT_NAME_SIZE + 1) * sizeof(char));
+            // file->section[i]->name = malloc((SECT_NAME_SIZE + 1) * sizeof(char)); ////// ATTENTION THE MEMORY LEAK PROBLEM WAS HERE /////////
             file->section[i]->name = strdup(section_name);
             free(section_name);
         }
@@ -886,7 +915,7 @@ void execute_extract_operation(int argc, char* argv[])
     {
         free_line_content(line);
         DISPLAY_ERR("Error type DIRECTORY");
-        exit(1);
+        return;
     }
 
     int fd = open(path, O_RDONLY);
@@ -896,11 +925,11 @@ void execute_extract_operation(int argc, char* argv[])
         DISPLAY_ERR("Cannot open the file");
         exit(1);
     }
-    fs_file* file = create_fs_file();
-    file = is_fs(fd);
+    //  file = create_fs_file(); /////////////////////// BE CAREFUL NEXT TIME, HERE WAS THE ISSUES WITH MEMORY LEAKS ///////////////////////////
+    fs_file* file = is_fs(fd);
     if(file != NULL)
     {
-        if((line->content = get_line_contents(fd, file, line->section_no, line->line_no)) > 0)
+        if((line->content = get_line_contents(fd, file, line)) > 0)
         {
             display_line_content(line);
         }
@@ -940,20 +969,23 @@ section_line* fetch_extract_options(int argc, char* argv[])
         else
         {
             DISPLAY_ERR("Invalid input");
+            free_line_content(line);
             print_usage();
-            exit(1);
+            return NULL;
         }
     }
     return line;
 }
 
-char* get_line_contents(int fd, fs_file* file, int section_no, int line_no) {
+char* get_line_contents(int fd, fs_file* file, section_line* line) {
+    int section_no = line->section_no;
+    int line_no = line->line_no;
     off_t section_offset = file->section[section_no - 1]->offset;
     size_t section_size = file->section[section_no - 1]->size;
 
     if (lseek(fd, section_offset, SEEK_SET) < 0) {
         DISPLAY_ERR("Unable to set position pointer");
-        return NULL;
+        return 0;
     }
 
     char line_content[section_size + 1]; 
@@ -963,7 +995,7 @@ char* get_line_contents(int fd, fs_file* file, int section_no, int line_no) {
     while ((read_bytes = read(fd, line_content + total_read, section_size - total_read)) > 0) {
         if (read_bytes < 0) {
             DISPLAY_ERR("Error reading file");
-            return NULL;
+            return 0;
         }
         total_read += read_bytes;
         if (total_read >= section_size || line_content[total_read - 1] == '\n') {
@@ -979,9 +1011,9 @@ char* get_line_contents(int fd, fs_file* file, int section_no, int line_no) {
     char* line_start = line_content;
     for (int i = 0; i < line_no - 1; i++) {
         line_start = strchr(line_start, '\n');
-        if (line_start == NULL) {
+        if (line_start == 0) {
             DISPLAY_ERR("Line number exceeds section size");
-            return NULL;
+            return 0;
         }
         line_start++; // Move past the '\n'
     }
@@ -997,7 +1029,8 @@ char* get_line_contents(int fd, fs_file* file, int section_no, int line_no) {
     char* content = malloc((line_length + 1) * sizeof(char)); 
     if (content == NULL) {
         DISPLAY_ERR("Memory allocation failed");
-        return NULL;
+        free(line_end);
+        return 0;
     }
     strncpy(content, line_start, line_length);
     content[line_length] = '\0'; 
@@ -1091,6 +1124,7 @@ void process_files(const char* entry_path) {
             fs_file* file = test_constraints(fd);
             if (file != NULL && check_section_size(file))
                 stdout_display(abs_path);
+            free_file_contents(file);
 
             close(fd);
         }
@@ -1126,7 +1160,6 @@ void findall_recursive(const char* entry_path) {
         }
 
         if (S_ISDIR(info.st_mode)) {
-            // Recursively process subdirectories
             findall_recursive(abs_path);
         }
     }
@@ -1197,7 +1230,7 @@ int check_args_num(int argc, int min, int max)
 
 char get_operation(int argc, char* argv[])
 {   
-    program_name = argv[0];
+    strncpy(program_name, argv[0], sizeof(program_name));
     if(!check_args_num(argc, MIN_ARGS, MAX_ARGS))
     {
         return 0;
@@ -1221,7 +1254,7 @@ int main(int argc, char* argv[])
 {
     // extract the operation specified & checks for args number provided
     char op = get_operation(argc, argv);
-
+     
     switch(op)
     {
         case 'v':
@@ -1252,4 +1285,6 @@ int main(int argc, char* argv[])
 }
 
 //______ MAIN SECTION ENDS ______//
+
+
 
